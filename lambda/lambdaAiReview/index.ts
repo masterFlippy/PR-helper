@@ -92,19 +92,19 @@ export const handler = async (event: any) => {
 
     const octokit = new Octokit({ auth: authentication.token });
 
-    for (const review of reviewResults) {
-      if (review.comment && review.filePath && review.lineNumber) {
-        await octokit.rest.pulls.createReviewComment({
-          owner: owner,
-          repo: repo,
-          pull_number: pullNumber,
-          body: review.comment,
-          commit_id: commitId,
-          path: review.filePath,
-          position: review.lineNumber,
-        });
-      }
-    }
+    // for (const review of reviewResults) {
+    //   if (review.comment && review.filePath && review.lineNumber) {
+    //     await octokit.rest.pulls.createReviewComment({
+    //       owner: owner,
+    //       repo: repo,
+    //       pull_number: pullNumber,
+    //       body: review.comment,
+    //       commit_id: commitId,
+    //       path: review.filePath,
+    //       position: review.lineNumber,
+    //     });
+    //   }
+    // }
 
     return {
       status: "success",
