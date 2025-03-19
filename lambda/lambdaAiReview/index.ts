@@ -19,7 +19,7 @@ const bedrockClient = new BedrockRuntimeClient({
   region: "us-east-1",
 });
 const secretsClient = new SecretsManagerClient({});
-
+// kör endast om action == opened and not draft PR. Eller kontrollera endast diff på commit
 export const handler = async (event: any) => {
   try {
     const owner = event.repository.owner.login;
@@ -28,8 +28,43 @@ export const handler = async (event: any) => {
     const commitId = event.pull_request.head.sha;
     const installationId = event.installation.id;
 
-    const diffUrl = event.pull_request.diff_url;
-    const diffResponse = await axios.get(diffUrl);
+    const secretCommand = new GetSecretValueCommand({
+      SecretId: process.env.GITHUB_PK_SECRET_NAME,
+    });
+    const secretResponse = await secretsClient.send(secretCommand);
+
+    if (!secretResponse.SecretString) {
+      throw new Error("Secret not found");
+    }
+
+    const githubPK = JSON.parse(
+      secretResponse.SecretString
+    ) satisfies GithubSecret;
+
+    const auth = createAppAuth({
+      appId: githubPK.appId,
+      privateKey: githubPK.privateKey,
+      installationId: installationId,
+    });
+
+    const authentication = await auth({ type: "installation" });
+
+    const octokit = new Octokit({ auth: authentication.token });
+
+    const commits = await octokit.rest.pulls.listCommits({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+
+    const latestCommit = commits.data[commits.data.length - 1];
+    const latestCommitSha = latestCommit.sha;
+
+    const latestCommitDiffUrl = `https://github.com/${owner}/${repo}/commit/${latestCommitSha}.diff`;
+
+    console.log(latestCommitDiffUrl);
+
+    const diffResponse = await axios.get(latestCommitDiffUrl);
     const diff = diffResponse.data;
 
     const prompt = `### Task
@@ -88,31 +123,11 @@ You are a code review assistant. Analyze the following code diff and provide fee
     const response = await bedrockClient.send(command);
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+    const parsedBody = JSON.parse(responseBody.content[0].text);
 
-    const secretCommand = new GetSecretValueCommand({
-      SecretId: process.env.GITHUB_PK_SECRET_NAME,
-    });
-    const secretResponse = await secretsClient.send(secretCommand);
-
-    if (!secretResponse.SecretString) {
-      throw new Error("Secret not found");
-    }
-
-    const githubPK = JSON.parse(
-      secretResponse.SecretString
-    ) satisfies GithubSecret;
-
-    const auth = createAppAuth({
-      appId: githubPK.appId,
-      privateKey: githubPK.privateKey,
-      installationId: installationId,
-    });
-
-    const authentication = await auth({ type: "installation" });
-
-    const octokit = new Octokit({ auth: authentication.token });
-
-    for (const review of responseBody.content) {
+    // fixa rätt typer
+    for (const review of parsedBody) {
+      console.log(review);
       if (review.comment && review.filePath && review.lineNumber) {
         await octokit.rest.pulls.createReviewComment({
           owner: owner,
@@ -121,7 +136,7 @@ You are a code review assistant. Analyze the following code diff and provide fee
           body: review.comment,
           commit_id: commitId,
           path: review.filePath,
-          position: review.lineNumber,
+          position: Number(review.lineNumber),
         });
       }
     }
