@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import { Duration } from "aws-cdk-lib";
 import {
   Deployment,
   LambdaIntegration,
@@ -23,6 +24,9 @@ import { DefinitionBody, StateMachine } from "aws-cdk-lib/aws-stepfunctions";
 import { LambdaInvoke } from "aws-cdk-lib/aws-stepfunctions-tasks";
 import { Construct } from "constructs";
 import path = require("path");
+import * as dotenv from "dotenv";
+
+dotenv.config();
 
 export class PullRequestAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -97,9 +101,7 @@ export class PullRequestAppStack extends cdk.Stack {
     aiReviewRole.addToPolicy(
       new PolicyStatement({
         actions: ["bedrock:InvokeModel"],
-        resources: [
-          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0",
-        ],
+        resources: [process.env.BEDROCK_MODEL_ARN ?? ""],
       })
     );
 
@@ -114,9 +116,10 @@ export class PullRequestAppStack extends cdk.Stack {
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
       entry: path.join(__dirname, "/../lambda/lambdaAiReview/index.ts"),
+      timeout: Duration.seconds(120),
       environment: {
         GITHUB_PK_SECRET_NAME: githubPKSecret.secretName,
-        BEDROCK_REGION: "us-east-1",
+        BEDROCK_REGION: process.env.BEDROCK_REGION ?? "",
       },
       role: aiReviewRole,
     });
@@ -132,6 +135,7 @@ export class PullRequestAppStack extends cdk.Stack {
           __dirname,
           "/../lambda/lambdaSlackNotification/index.ts"
         ),
+        timeout: Duration.seconds(120),
         environment: {
           SLACK_WEBHOOK_URL: "YOUR_SLACK_WEBHOOK_URL",
         },

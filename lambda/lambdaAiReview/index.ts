@@ -24,6 +24,7 @@ export const handler = async (event: any) => {
     const isDraft = event.pull_request.draft;
     const isMerged = event.pull_request.merged;
     const action = event.action;
+
     if (isDraft || isMerged || action === "closed") {
       return {
         status: "success",
@@ -134,10 +135,8 @@ You are a code review assistant. Analyze the following code diff and provide fee
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
     const parsedBody = JSON.parse(responseBody.content[0].text);
-
     // fixa rätt typer
     for (const review of parsedBody) {
-      console.log(review);
       if (review.comment && review.filePath && review.lineNumber) {
         await octokit.rest.pulls.createReviewComment({
           owner: owner,
