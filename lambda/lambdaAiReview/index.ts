@@ -136,7 +136,7 @@ You are a code review assistant. Analyze the following code diff and provide fee
           body: review.comment,
           commit_id: commitId,
           path: review.filePath,
-          position: Number(review.lineNumber),
+          line: Number(review.lineNumber),
         });
       }
     }
