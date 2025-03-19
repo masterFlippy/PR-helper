@@ -1,10 +1,5 @@
 import axios from "axios";
-
-interface IEvent {
-  status: "success" | "failed";
-  body: any;
-}
-interface Detail {
+interface GitHubPullRequestPayload {
   action: string;
   repository: {
     owner: {
@@ -25,19 +20,25 @@ interface Detail {
     login: string;
   };
 }
+interface Event {
+  Payload: { status: "success" | "failed"; body: GitHubPullRequestPayload };
+}
 
-export const handler = async (event: IEvent) => {
+export const handler = async (event: Event) => {
   try {
-    // add if failed send to event bridge with error message and what to do with it
-    // if (event.status === "failed") {
+    if (event.Payload.body.action === "assigned") {
+      return {
+        statusCode: 200,
+      };
+    }
 
-    const detail: Detail = JSON.parse(event.body);
-    const owner = detail.repository.owner.login;
-    const repo = detail.repository.name;
-    const pullNumber = detail.number;
-    const pullRequestTitle = detail.pull_request.title;
-    const pullRequestUrl = detail.pull_request.html_url;
-    const sender = detail.sender.login;
+    const githubPullRequestPayload = event.Payload.body;
+    const owner = githubPullRequestPayload.repository.owner.login;
+    const repo = githubPullRequestPayload.repository.name;
+    const pullNumber = githubPullRequestPayload.number;
+    const pullRequestTitle = githubPullRequestPayload.pull_request.title;
+    const pullRequestUrl = githubPullRequestPayload.pull_request.html_url;
+    const sender = githubPullRequestPayload.sender.login;
 
     const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
 
@@ -46,14 +47,14 @@ export const handler = async (event: IEvent) => {
     }
 
     let slackMessage = { text: "" };
-    switch (detail.action) {
+    switch (githubPullRequestPayload.action) {
       case "opened":
         slackMessage = {
           text: `🎉 New pull request opened by ${sender} in ${owner}/${repo}: ${pullRequestTitle} - <${pullRequestUrl}|View PR>`,
         };
         break;
       case "closed":
-        if (detail.pull_request.merged) {
+        if (githubPullRequestPayload.pull_request.merged) {
           slackMessage = {
             text: `✅ Pull request #${pullNumber} in ${owner}/${repo} was merged.`,
           };
@@ -75,18 +76,21 @@ export const handler = async (event: IEvent) => {
         break;
       case "synchronize":
         slackMessage = {
-          text: `🔄 Pull request #${pullNumber} in ${owner}/${repo} was synchronized.`,
+          text: `🔄 Pull request #${pullNumber} in ${owner}/${repo} was updated.`,
         };
         break;
-      // Add more cases for other event types as needed
       default:
         slackMessage = {
-          text: `Pull request #${pullNumber} in ${owner}/${repo} received an event: ${detail.action}`,
+          text: `Pull request #${pullNumber} in ${owner}/${repo} received an event: ${githubPullRequestPayload.action}`,
         };
         break;
     }
 
-    if (event.status === "success") {
+    if (
+      event.Payload.status === "success" &&
+      (githubPullRequestPayload.action === "synchronize" ||
+        githubPullRequestPayload.action === "opened")
+    ) {
       slackMessage.text += "\n\n✅ AI review completed.";
     }
 
@@ -95,7 +99,6 @@ export const handler = async (event: IEvent) => {
       statusCode: 200,
     };
   } catch (error) {
-    // hadnle erro. send to event bridge ?
     console.error("Error:", error);
     return {
       statusCode: 500,

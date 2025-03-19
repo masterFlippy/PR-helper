@@ -1,39 +1,33 @@
 import * as crypto from "crypto";
 
 import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from "@aws-sdk/client-secrets-manager";
-import {
   EventBridgeClient,
   PutEventsCommand,
 } from "@aws-sdk/client-eventbridge";
+import { getSecret } from "../../utils/aws";
 
-const client = new EventBridgeClient({ region: "REGION" });
-const secretsClient = new SecretsManagerClient({});
+const client = new EventBridgeClient({ region: "eu-north-1" });
 
 export const handler = async (event: any) => {
   try {
-    const secretCommand = new GetSecretValueCommand({
-      SecretId: process.env.WEBHOOK_SECRET,
-    });
-    const secretResponse = await secretsClient.send(secretCommand);
+    const secretName = process.env.WEBHOOK_SECRET;
 
-    if (!secretResponse.SecretString) {
-      throw new Error("Secret not found");
+    if (!secretName) {
+      throw new Error("Webhook secret name not found");
     }
 
-    const webhookSecret = secretResponse.SecretString;
+    const webhookSecret = await getSecret(secretName, "string");
 
-    const signature = event.headers["x-hub-signature-256"]!;
+    const signature = event.headers["X-Hub-Signature-256"]!;
+
     const body = event.body!;
+    const parsedBody = JSON.parse(body);
 
     const hmac = crypto.createHmac("sha256", webhookSecret);
     hmac.update(body);
     const expectedSignature = `sha256=${hmac.digest("hex")}`;
 
     if (signature !== expectedSignature) {
-      // TODO: change to throw new Error
       console.error("Signature verification failed");
       return {
         statusCode: 403,
@@ -46,15 +40,14 @@ export const handler = async (event: any) => {
         {
           Source: "github.webhook",
           DetailType: "github.pull_request",
-          Detail: JSON.stringify(body),
-          EventBusName: "default",
+          Detail: JSON.stringify(parsedBody),
+          EventBusName: process.env.EVENT_BUS_NAME,
         },
       ],
     };
-
     const command = new PutEventsCommand(params);
-    await client.send(command);
 
+    await client.send(command);
     return { statusCode: 200, body: JSON.stringify({ message: "OK" }) };
   } catch (error) {
     console.error("Error:", error);

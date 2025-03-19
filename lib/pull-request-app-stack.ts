@@ -1,5 +1,12 @@
 import * as cdk from "aws-cdk-lib";
-import { LambdaIntegration, RestApi } from "aws-cdk-lib/aws-apigateway";
+import { Duration } from "aws-cdk-lib";
+import {
+  Deployment,
+  LambdaIntegration,
+  MethodLoggingLevel,
+  RestApi,
+  Stage,
+} from "aws-cdk-lib/aws-apigateway";
 import { EventBus, Rule, RuleTargetInput } from "aws-cdk-lib/aws-events";
 import { SfnStateMachine } from "aws-cdk-lib/aws-events-targets";
 import {
@@ -17,6 +24,9 @@ import { DefinitionBody, StateMachine } from "aws-cdk-lib/aws-stepfunctions";
 import { LambdaInvoke } from "aws-cdk-lib/aws-stepfunctions-tasks";
 import { Construct } from "constructs";
 import path = require("path");
+import * as dotenv from "dotenv";
+
+dotenv.config();
 
 export class PullRequestAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -30,6 +40,10 @@ export class PullRequestAppStack extends cdk.Stack {
       secretName: "githubPK",
     });
 
+    const eventBus = new EventBus(this, "prEventBus", {
+      eventBusName: "prEventBus",
+    });
+
     const lambdaEventBridgeRole = new Role(this, "LambdaEventBridgeRole", {
       assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
     });
@@ -40,6 +54,51 @@ export class PullRequestAppStack extends cdk.Stack {
         resources: ["*"],
       })
     );
+    lambdaEventBridgeRole.addToPolicy(
+      new PolicyStatement({
+        actions: [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ],
+        resources: ["arn:aws:logs:*:*:*"],
+      })
+    );
+    eventBus.grantPutEventsTo(lambdaEventBridgeRole);
+
+    const aiReviewRole = new Role(this, "AiReviewLambdaRole", {
+      assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
+    });
+
+    aiReviewRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["events:PutEvents"],
+        resources: ["*"],
+      })
+    );
+    aiReviewRole.addToPolicy(
+      new PolicyStatement({
+        actions: [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ],
+        resources: ["arn:aws:logs:*:*:*"],
+      })
+    );
+    aiReviewRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["bedrock:InvokeModel"],
+        resources: [process.env.BEDROCK_MODEL_ARN ?? ""],
+      })
+    );
+
+    aiReviewRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["secretsmanager:GetSecretValue"],
+        resources: [githubPKSecret.secretArn],
+      })
+    );
 
     const verificationLambda = new NodejsFunction(this, "VerificationLambda", {
       runtime: Runtime.NODEJS_22_X,
@@ -47,6 +106,7 @@ export class PullRequestAppStack extends cdk.Stack {
       handler: "index.handler",
       environment: {
         WEBHOOK_SECRET: githubTokenSecret.secretName,
+        EVENT_BUS_NAME: eventBus.eventBusName,
       },
       role: lambdaEventBridgeRole,
     });
@@ -56,9 +116,12 @@ export class PullRequestAppStack extends cdk.Stack {
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
       entry: path.join(__dirname, "/../lambda/lambdaAiReview/index.ts"),
+      timeout: Duration.seconds(120),
       environment: {
         GITHUB_PK_SECRET_NAME: githubPKSecret.secretName,
+        BEDROCK_REGION: process.env.BEDROCK_REGION ?? "",
       },
+      role: aiReviewRole,
     });
     githubPKSecret.grantRead(aiReviewLambda);
 
@@ -72,15 +135,16 @@ export class PullRequestAppStack extends cdk.Stack {
           __dirname,
           "/../lambda/lambdaSlackNotification/index.ts"
         ),
+        timeout: Duration.seconds(120),
         environment: {
-          SLACK_WEBHOOK_URL: "YOUR_SLACK_WEBHOOK_URL",
+          SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL ?? "",
         },
+        role: lambdaEventBridgeRole,
       }
     );
 
     const aiReviewTask = new LambdaInvoke(this, "AIReviewTask", {
       lambdaFunction: aiReviewLambda,
-      outputPath: "$.Payload",
     });
 
     const slackNotificationTask = new LambdaInvoke(
@@ -88,7 +152,6 @@ export class PullRequestAppStack extends cdk.Stack {
       "SlackNotificationTask",
       {
         lambdaFunction: slackNotificationLambda,
-        outputPath: "$.Payload",
       }
     );
 
@@ -97,8 +160,12 @@ export class PullRequestAppStack extends cdk.Stack {
         aiReviewTask.next(slackNotificationTask)
       ),
     });
+    stateMachine.grantStartExecution(
+      new cdk.aws_iam.ServicePrincipal("events.amazonaws.com")
+    );
 
     const rule = new Rule(this, "GithubPullRequestRule", {
+      eventBus: eventBus,
       eventPattern: {
         source: ["github.webhook"],
         detailType: ["github.pull_request"],
@@ -138,21 +205,29 @@ export class PullRequestAppStack extends cdk.Stack {
       }),
     });
 
-    const webhookResource = api.root.addResource("webhook");
+    verificationLambda.addPermission("ApiGatewayInvoke", {
+      principal: new ServicePrincipal("apigateway.amazonaws.com"),
+      action: "lambda:InvokeFunction",
+      sourceArn: api.arnForExecuteApi(),
+    });
 
-    const eventBus = EventBus.fromEventBusName(this, "default", "default");
-    const apiGatewayEventBridgeRole = new Role(
-      this,
-      "ApiGatewayEventBridgeRole",
-      {
-        assumedBy: new ServicePrincipal("apigateway.amazonaws.com"),
-      }
-    );
-    eventBus.grantPutEventsTo(apiGatewayEventBridgeRole);
+    const webhookResource = api.root.addResource("webhook");
 
     webhookResource.addMethod(
       "POST",
       new LambdaIntegration(verificationLambda)
     );
+
+    const deployment = new Deployment(this, "ApiDeployment", {
+      api: api,
+    });
+
+    const stage = new Stage(this, "ApiStage", {
+      deployment: deployment,
+      stageName: "dev",
+      loggingLevel: MethodLoggingLevel.INFO,
+    });
+
+    stage.node.addDependency(verificationLambda);
   }
 }
