@@ -85,7 +85,7 @@ export const handler = async (event: Event) => {
         };
         break;
     }
-
+    //hej
     if (
       event.Payload.status === "success" &&
       (githubPullRequestPayload.action === "synchronize" ||
