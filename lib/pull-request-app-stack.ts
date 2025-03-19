@@ -40,12 +40,12 @@ export class PullRequestAppStack extends cdk.Stack {
       secretName: "githubPK",
     });
 
-    const lambdaEventBridgeRole = new Role(this, "LambdaEventBridgeRole", {
-      assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
-    });
-
     const eventBus = new EventBus(this, "prEventBus", {
       eventBusName: "prEventBus",
+    });
+
+    const lambdaEventBridgeRole = new Role(this, "LambdaEventBridgeRole", {
+      assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
     });
 
     lambdaEventBridgeRole.addToPolicy(
@@ -65,18 +65,6 @@ export class PullRequestAppStack extends cdk.Stack {
       })
     );
     eventBus.grantPutEventsTo(lambdaEventBridgeRole);
-
-    const verificationLambda = new NodejsFunction(this, "VerificationLambda", {
-      runtime: Runtime.NODEJS_22_X,
-      entry: path.join(__dirname, "../lambda/lambdaVerification/index.ts"),
-      handler: "index.handler",
-      environment: {
-        WEBHOOK_SECRET: githubTokenSecret.secretName,
-        EVENT_BUS_NAME: eventBus.eventBusName,
-      },
-      role: lambdaEventBridgeRole,
-    });
-    githubTokenSecret.grantRead(verificationLambda);
 
     const aiReviewRole = new Role(this, "AiReviewLambdaRole", {
       assumedBy: new ServicePrincipal("lambda.amazonaws.com"),
@@ -112,6 +100,18 @@ export class PullRequestAppStack extends cdk.Stack {
       })
     );
 
+    const verificationLambda = new NodejsFunction(this, "VerificationLambda", {
+      runtime: Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, "../lambda/lambdaVerification/index.ts"),
+      handler: "index.handler",
+      environment: {
+        WEBHOOK_SECRET: githubTokenSecret.secretName,
+        EVENT_BUS_NAME: eventBus.eventBusName,
+      },
+      role: lambdaEventBridgeRole,
+    });
+    githubTokenSecret.grantRead(verificationLambda);
+
     const aiReviewLambda = new NodejsFunction(this, "AiReviewLambda", {
       runtime: Runtime.NODEJS_22_X,
       handler: "index.handler",
@@ -137,7 +137,7 @@ export class PullRequestAppStack extends cdk.Stack {
         ),
         timeout: Duration.seconds(120),
         environment: {
-          SLACK_WEBHOOK_URL: "YOUR_SLACK_WEBHOOK_URL",
+          SLACK_WEBHOOK_URL: process.env.SLACK_WEBHOOK_URL ?? "",
         },
         role: lambdaEventBridgeRole,
       }
@@ -163,6 +163,7 @@ export class PullRequestAppStack extends cdk.Stack {
     stateMachine.grantStartExecution(
       new cdk.aws_iam.ServicePrincipal("events.amazonaws.com")
     );
+
     const rule = new Rule(this, "GithubPullRequestRule", {
       eventBus: eventBus,
       eventPattern: {
