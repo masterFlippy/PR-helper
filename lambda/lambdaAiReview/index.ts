@@ -14,14 +14,23 @@ interface GithubSecret {
   appId: string;
   privateKey: string;
 }
-
 const bedrockClient = new BedrockRuntimeClient({
-  region: "us-east-1",
+  region: process.env.BEDROCK_REGION,
 });
 const secretsClient = new SecretsManagerClient({});
-// kör endast om action == opened and not draft PR. Eller kontrollera endast diff på commit
+
 export const handler = async (event: any) => {
   try {
+    const isDraft = event.pull_request.draft;
+    const isMerged = event.pull_request.merged;
+    const action = event.action;
+    if (isDraft || isMerged || action === "closed") {
+      return {
+        status: "success",
+        body: JSON.stringify(event),
+      };
+    }
+
     const owner = event.repository.owner.login;
     const repo = event.repository.name;
     const pullNumber = event.number;
@@ -48,23 +57,24 @@ export const handler = async (event: any) => {
     });
 
     const authentication = await auth({ type: "installation" });
-
     const octokit = new Octokit({ auth: authentication.token });
 
-    const commits = await octokit.rest.pulls.listCommits({
-      owner,
-      repo,
-      pull_number: pullNumber,
-    });
+    let diffUrl;
 
-    const latestCommit = commits.data[commits.data.length - 1];
-    const latestCommitSha = latestCommit.sha;
+    if (action === "opened") {
+      diffUrl = event.pull_request.diff_url;
+    } else {
+      const commits = await octokit.rest.pulls.listCommits({
+        owner,
+        repo,
+        pull_number: pullNumber,
+      });
 
-    const latestCommitDiffUrl = `https://github.com/${owner}/${repo}/commit/${latestCommitSha}.diff`;
-
-    console.log(latestCommitDiffUrl);
-
-    const diffResponse = await axios.get(latestCommitDiffUrl);
+      const latestCommit = commits.data[commits.data.length - 1];
+      const latestCommitSha = latestCommit.sha;
+      diffUrl = `https://github.com/${owner}/${repo}/commit/${latestCommitSha}.diff`;
+    }
+    const diffResponse = await axios.get(diffUrl);
     const diff = diffResponse.data;
 
     const prompt = `### Task

@@ -5,5 +5,5 @@ import { PullRequestAppStack } from "../lib/pull-request-app-stack";
 
 const app = new cdk.App();
 new PullRequestAppStack(app, "PullRequestAppStack", {
-  env: { account: "864981749661", region: "eu-north-1" },
+  env: { account: "xx", region: "eu-north-1" },
 });

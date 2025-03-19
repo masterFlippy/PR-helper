@@ -116,6 +116,7 @@ export class PullRequestAppStack extends cdk.Stack {
       entry: path.join(__dirname, "/../lambda/lambdaAiReview/index.ts"),
       environment: {
         GITHUB_PK_SECRET_NAME: githubPKSecret.secretName,
+        BEDROCK_REGION: "us-east-1",
       },
       role: aiReviewRole,
     });
