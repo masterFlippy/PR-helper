@@ -21,18 +21,19 @@ interface GitHubPullRequestPayload {
   };
 }
 interface Event {
-  Payload: { status: "success" | "failed"; body: GitHubPullRequestPayload };
+  Payload: { status: "success" | "failed"; body: string };
 }
 
 export const handler = async (event: Event) => {
+  const githubPullRequestPayload: GitHubPullRequestPayload = JSON.parse(
+    event.Payload.body
+  );
   try {
-    if (event.Payload.body.action === "assigned") {
+    if (githubPullRequestPayload.action === "assigned") {
       return {
         statusCode: 200,
       };
     }
-
-    const githubPullRequestPayload = event.Payload.body;
     const owner = githubPullRequestPayload.repository.owner.login;
     const repo = githubPullRequestPayload.repository.name;
     const pullNumber = githubPullRequestPayload.number;
@@ -85,7 +86,7 @@ export const handler = async (event: Event) => {
         };
         break;
     }
-    //hej
+
     if (
       event.Payload.status === "success" &&
       (githubPullRequestPayload.action === "synchronize" ||
