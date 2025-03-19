@@ -16,61 +16,81 @@ interface GithubSecret {
 }
 
 const bedrockClient = new BedrockRuntimeClient({
-  region: process.env.AWS_REGION,
+  region: "us-east-1",
 });
 const secretsClient = new SecretsManagerClient({});
 
 export const handler = async (event: any) => {
   try {
-    const detail = JSON.parse(event.body).detail;
-    const owner = detail.repository.owner.login;
-    const repo = detail.repository.name;
-    const pullNumber = detail.number;
-    const commitId = detail.pull_request.head.sha;
-    const installationId = detail.installation.id;
+    const owner = event.repository.owner.login;
+    const repo = event.repository.name;
+    const pullNumber = event.number;
+    const commitId = event.pull_request.head.sha;
+    const installationId = event.installation.id;
 
-    const diffUrl = detail.pull_request.diff_url;
+    const diffUrl = event.pull_request.diff_url;
     const diffResponse = await axios.get(diffUrl);
     const diff = diffResponse.data;
 
-    console.log("event", event);
-    console.log("detail", detail);
+    const prompt = `### Task
+You are a code review assistant. Analyze the following code diff and provide feedback.
 
-    const prompt = `Review the following code diff and provide feedback. For each issue you find, please provide:
-      - A detailed comment explaining the issue.
-      - The file path where the issue occurs.
-      - The line number(s) where the issue is located.
+### Instructions
+- Identify **potential issues, improvements, or errors** in the code diff.
+- **STRICTLY output a JSON array—NO explanations, NO introductions, NO extra text.**
+- If there are issues, return a **JSON array** where each object contains:
+  - **"comment"** → A detailed issue description.
+  - **"filePath"** → The affected file path.
+  - **"lineNumber"** → The affected line number. If there are more than one. Choose the last line number
 
-      I expect you to format your response as a JSON array, where each object has the following structure:
-      {
-        'comment': '...',
-        'filePath': '...',
-        'lineNumber': '...'
-      }
-      
-      The whole response has to be in the format a JSON array.
+### **Output Format**
+- **If there are issues**, return:
+\`\`\`json
+[
+  {
+    "comment": "Description of the issue",
+    "filePath": "path/to/file",
+    "lineNumber": "42"
+  }
+]
+\`\`\`
+- **If there are NO issues**, return **exactly**:
+\`\`\`json
+[]
+\`\`\`
+- **DO NOT include anything else—no introductions, no summaries, no explanations.**
+- **Your entire response must be a valid JSON array, nothing before or after it.**
 
-      If there are no issues, please provide an empty JSON array.
-
-      Code diff: \n\n${diff}`;
+#### **Code Diff**
+\`\`\`
+    ${diff}
+    \`\`\`
+    `;
 
     const input = {
-      modelId: "amazon.nova-lite-v1:0",
-      messages: [prompt],
-      inferenceConfig: {
-        maxTokens: 1024,
+      modelId: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      contentType: "application/json",
+      accept: "application/json",
+      body: JSON.stringify({
+        anthropic_version: "bedrock-2023-05-31",
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        max_tokens: 1024,
         temperature: 0.5,
-      },
+      }),
     };
 
     const command = new InvokeModelCommand(input);
     const response = await bedrockClient.send(command);
 
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-    const reviewResults = JSON.parse(responseBody.completion);
 
     const secretCommand = new GetSecretValueCommand({
-      SecretId: process.env.GITHUB_TOKEN_SECRET_NAME,
+      SecretId: process.env.GITHUB_PK_SECRET_NAME,
     });
     const secretResponse = await secretsClient.send(secretCommand);
 
@@ -92,23 +112,23 @@ export const handler = async (event: any) => {
 
     const octokit = new Octokit({ auth: authentication.token });
 
-    // for (const review of reviewResults) {
-    //   if (review.comment && review.filePath && review.lineNumber) {
-    //     await octokit.rest.pulls.createReviewComment({
-    //       owner: owner,
-    //       repo: repo,
-    //       pull_number: pullNumber,
-    //       body: review.comment,
-    //       commit_id: commitId,
-    //       path: review.filePath,
-    //       position: review.lineNumber,
-    //     });
-    //   }
-    // }
+    for (const review of responseBody.content) {
+      if (review.comment && review.filePath && review.lineNumber) {
+        await octokit.rest.pulls.createReviewComment({
+          owner: owner,
+          repo: repo,
+          pull_number: pullNumber,
+          body: review.comment,
+          commit_id: commitId,
+          path: review.filePath,
+          position: review.lineNumber,
+        });
+      }
+    }
 
     return {
       status: "success",
-      body: JSON.stringify(detail),
+      body: JSON.stringify(event),
     };
   } catch (error) {
     console.error("Error:", error);

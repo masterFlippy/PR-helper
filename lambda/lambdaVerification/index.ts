@@ -9,7 +9,7 @@ import {
   PutEventsCommand,
 } from "@aws-sdk/client-eventbridge";
 
-const client = new EventBridgeClient({ region: "REGION" });
+const client = new EventBridgeClient({ region: "eu-north-1" });
 const secretsClient = new SecretsManagerClient({});
 
 export const handler = async (event: any) => {
@@ -25,8 +25,10 @@ export const handler = async (event: any) => {
 
     const webhookSecret = secretResponse.SecretString;
 
-    const signature = event.headers["x-hub-signature-256"]!;
+    const signature = event.headers["X-Hub-Signature-256"]!;
+
     const body = event.body!;
+    const parsedBody = JSON.parse(body);
 
     const hmac = crypto.createHmac("sha256", webhookSecret);
     hmac.update(body);
@@ -40,21 +42,19 @@ export const handler = async (event: any) => {
         body: JSON.stringify({ message: "Forbidden" }),
       };
     }
-
     const params = {
       Entries: [
         {
           Source: "github.webhook",
           DetailType: "github.pull_request",
-          Detail: JSON.stringify(body),
-          EventBusName: "default",
+          Detail: JSON.stringify(parsedBody),
+          EventBusName: process.env.EVENT_BUS_NAME,
         },
       ],
     };
-
     const command = new PutEventsCommand(params);
-    await client.send(command);
 
+    await client.send(command);
     return { statusCode: 200, body: JSON.stringify({ message: "OK" }) };
   } catch (error) {
     console.error("Error:", error);
